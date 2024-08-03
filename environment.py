@@ -2,6 +2,7 @@ import simpy
 import math
 import random
 import numpy as np
+import copy
 from instance_gen import gen_uniform_instance
 
 class Solution:
@@ -52,16 +53,16 @@ class MDCVRP:
         self.env.run()
 
 class Vehicle:
-    def __init__(self, mdcvrp, vehicle_index, env):
+    def __init__(self, mdcvrp, vehicle_id, env):
         self.initial_capacity = mdcvrp.capacity
         self.capacity = mdcvrp.capacity
         self.num_vehicles = mdcvrp.num_vehicles
         self.num_customers = mdcvrp.num_customers
-        self.customers_demands = mdcvrp.customers_demands
+        self.customers_demands = copy.deepcopy(mdcvrp.customers_demands)
         self.customers_coordinates = mdcvrp.customers_coordinates
-        self.vehicle_index = vehicle_index
+        self.vehicle_id = vehicle_id
         self.depots_coordinates = mdcvrp.depots_coordinates
-        self.depot_location = self.depots_coordinates[self.vehicle_index]
+        self.depot_location = self.depots_coordinates[self.vehicle_id]
 
         self.current_location = self.depot_location
 
@@ -70,8 +71,12 @@ class Vehicle:
         self.total_delivered_load = 0
 
         self.state = []
+        self.previous_state = []
+        self.initial_state()
+        self.reward = 0
+        self.terminal = 0
 
-        self.process = env.process(self.run(env))
+        self.process = env.process(self.run(env, mdcvrp))
 
     def euclidean_distance(self, p1, p2):
         return math.dist(p1, p2)
@@ -90,14 +95,15 @@ class Vehicle:
         for cust in range(self.num_customers):
             self.state[cust] = self.euclidean_distance(self.current_location, self.customers_coordinates[cust]) # add distance between vehicle and customers
 
-    def run(self, env):
-        self.initial_state()
+    def run(self, env, mdcvrp):
 
-        while True:
+        while not self.terminal:
             feasible_actions = [1 if (x > 0 and self.capacity >= x) else 0 for x in self.customers_demands]
             feasible_action_indexes = [i for i in range(len(feasible_actions)) if feasible_actions[i]]
 
-            if sum(feasible_action_indexes) == 0:
+            self.previous_state = copy.deepcopy(self.state)
+
+            if len(feasible_action_indexes) == 0:
                 distance = self.euclidean_distance(self.current_location, self.depot_location)
 
                 yield env.timeout(distance)
@@ -107,12 +113,16 @@ class Vehicle:
                 self.update_distances()
                 self.state[self.num_customers * 2 + 1] = 0
                 self.state[self.num_customers * 2 + 3] += distance
+
+                self.reward = -distance
             else:
                 action = random.choice(feasible_action_indexes)
                 distance = self.euclidean_distance(self.current_location, self.customers_coordinates[action])
 
                 demand_fulfilled = self.customers_demands[action] if self.capacity >= self.customers_demands[action] else self.customers_demands[action] - self.capacity
-                self.customers_demands[action] -= demand_fulfilled
+
+                for vec in mdcvrp.vehicles:
+                    vec.customers_demands[action] -= demand_fulfilled
 
                 yield env.timeout(distance)
 
@@ -123,11 +133,14 @@ class Vehicle:
                 self.capacity -= demand_fulfilled
 
                 self.update_distances()
-                self.state[action + self.num_customers] -= demand_fulfilled
+                for vec in mdcvrp.vehicles:
+                    vec.state[action + self.num_customers] -= demand_fulfilled
                 self.state[self.num_customers * 2] = self.capacity - demand_fulfilled
                 self.state[self.num_customers * 2 + 1] = self.euclidean_distance(self.current_location, self.depot_location)
                 self.state[self.num_customers * 2 + 2] += demand_fulfilled
                 self.state[self.num_customers * 2 + 3] += distance
+
+                self.reward = -distance
 
             if sum(self.customers_demands) == 0:
                 distance = self.euclidean_distance(self.current_location, self.depot_location)
@@ -137,5 +150,8 @@ class Vehicle:
                 self.depot_distance = 0
                 self.state[self.num_customers * 2 + 1] = 0
                 self.state[self.num_customers * 2 + 3] += distance
-                break
-            print(self.total_distance)
+                self.terminal = 1
+                self.reward = -distance
+
+        print(self.total_distance)
+        print(self.vehicle_id)
