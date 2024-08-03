@@ -149,6 +149,16 @@ class Vehicle:
 
             self.solution.append(self.action)
             self.transition = [self.previous_state, self.action, self.reward, self.state, self.terminal]
-            agents.memory.store(*self.transition)
+
+            if s.USE_RAINBOW == 0:
+                agents.memory.store(*self.transition)
+            else:
+                if s.N_STEP > 1:
+                    one_step_transition = agents.memory_n.store(*self.transition)
+                else:
+                    one_step_transition = self.transition
+
+                if one_step_transition:
+                    agents.memory.store(*one_step_transition)
 
             agents.optimize_model()
