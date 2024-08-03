@@ -3,57 +3,50 @@ import math
 import random
 import numpy as np
 import copy
-from instance_gen import gen_uniform_instance
+import settings as s
+from instance_gen import gen_uniform_instance, read_cvrp_benchmark_instance
 
 class Solution:
     def __init__(self):
-        self.results_pool = {
-            'solutions': [],
-            'objective': []
-        }
+        self.results_pool = []
 
-    def add_pool(self, solution, objective):
-        self.results_pool['solutions'].append(solution)
-        self.results_pool['objective'].append(objective)
+    def add_pool(self, agents):
+        total_distance = 0
+        for agent in agents:
+            total_distance += agent.total_distance
+
+        self.results_pool.append(total_distance)
 
 class MDCVRP:
-    def __init__(self, n_vehicles, capacity, n_customers, map_size, mode):
-        self.map_size = map_size
-        self.num_vehicles = n_vehicles
-        self.capacity = capacity
-        self.num_customers = n_customers
-
-        self.customers_coordinates, self.customers_demands, self.depots_coordinates = gen_uniform_instance(
-            self.num_vehicles, self.num_customers, self.capacity, self.map_size)
+    def __init__(self, mode):
+        # self.customers_coordinates, self.customers_demands, self.depots_coordinates = gen_uniform_instance(
+        #     self.num_vehicles, self.num_customers, self.capacity, self.map_size)
+        self.customers_coordinates, self.customers_demands, self.depots_coordinates, self.capacity, self.num_vehicles, self.num_customers = read_cvrp_benchmark_instance(s.INSTANCE_DIR)
 
         self.env = None
         self.solution = Solution()
         self.loss_log = None
-        self.steps_log = None
         self.mode = mode
 
-    def reset(self, n_vehicles, capacity, n_customers, map_size):
-        self.map_size = map_size
-        self.num_vehicles = n_vehicles
-        self.capacity = capacity
-        self.num_customers = n_customers
-
-        self.customers_coordinates, self.customers_demands, self.depots_coordinates = gen_uniform_instance(
-            self.num_vehicles, self.num_customers, self.capacity, self.map_size)
+    def reset(self, agents):
+        # self.customers_coordinates, self.customers_demands, self.depots_coordinates = gen_uniform_instance(
+        #     self.num_vehicles, self.num_customers, self.capacity, self.map_size)
+        self.customers_coordinates, self.customers_demands, self.depots_coordinates, self.capacity, self.num_vehicles, self.num_customers = read_cvrp_benchmark_instance(s.INSTANCE_DIR)
 
         self.env = simpy.Environment()
 
-        self.vehicles = [Vehicle(self, vec, self.env) for vec in range(self.num_vehicles)]
+        self.vehicles = [Vehicle(self, vec, self.env, agents) for vec in range(self.num_vehicles)]
 
-    def execute(self, eps, num_steps):
+    def execute(self, eps):
         if self.mode == "train":
             print(f'*************************************************************************************')
-            print(f'Episode: {eps} | Step Count: {num_steps}')
+            print(f'Episode: {eps}')
 
         self.env.run()
+        self.solution.add_pool(self.vehicles)
 
 class Vehicle:
-    def __init__(self, mdcvrp, vehicle_id, env):
+    def __init__(self, mdcvrp, vehicle_id, env, agents):
         self.initial_capacity = mdcvrp.capacity
         self.capacity = mdcvrp.capacity
         self.num_vehicles = mdcvrp.num_vehicles
@@ -74,30 +67,35 @@ class Vehicle:
         self.previous_state = []
         self.initial_state()
         self.reward = 0
+        self.action = 0
         self.terminal = 0
 
-        self.process = env.process(self.run(env, mdcvrp))
+        self.transition = list()
+        self.solution = []
+
+        self.process = env.process(self.run(env, mdcvrp, agents))
 
     def euclidean_distance(self, p1, p2):
         return math.dist(p1, p2)
 
     def initial_state(self):
         for cust in range(self.num_customers):
-            self.state.append(self.euclidean_distance(self.current_location, self.customers_coordinates[cust])) # add distance between vehicle and customers
+            self.state.append(self.euclidean_distance(self.current_location, self.customers_coordinates[cust]))  # add distance between vehicle and customers
 
-        self.state = self.state + self.customers_demands # add customer demands
-        self.state.append(self.capacity) # register vehicle capacity
-        self.state.append(self.depot_distance) # distance between vehicle and depot
-        self.state.append(self.total_delivered_load) # total delivered load by vehicle
-        self.state.append(self.total_distance) # total travelled distance
+        self.state = self.state + self.customers_demands  # add customer demands
+        self.state.append(self.capacity)  # register vehicle capacity
+        self.state.append(self.depot_distance)  # distance between vehicle and depot
+        self.state.append(self.total_delivered_load)  # total delivered load by vehicle
+        self.state.append(self.total_distance)  # total travelled distance
 
     def update_distances(self):
         for cust in range(self.num_customers):
-            self.state[cust] = self.euclidean_distance(self.current_location, self.customers_coordinates[cust]) # add distance between vehicle and customers
+            self.state[cust] = self.euclidean_distance(self.current_location, self.customers_coordinates[cust])  # add distance between vehicle and customers
 
-    def run(self, env, mdcvrp):
+    def run(self, env, mdcvrp, agents):
 
         while not self.terminal:
+
             feasible_actions = [1 if (x > 0 and self.capacity >= x) else 0 for x in self.customers_demands]
             feasible_action_indexes = [i for i in range(len(feasible_actions)) if feasible_actions[i]]
 
@@ -110,23 +108,30 @@ class Vehicle:
 
                 self.capacity = self.initial_capacity
                 self.current_location = self.depot_location
+                self.total_distance += distance
+                self.depot_distance = 0
                 self.update_distances()
                 self.state[self.num_customers * 2 + 1] = 0
                 self.state[self.num_customers * 2 + 3] += distance
 
                 self.reward = -distance
-            else:
-                action = random.choice(feasible_action_indexes)
-                distance = self.euclidean_distance(self.current_location, self.customers_coordinates[action])
+                self.action = self.num_customers
 
-                demand_fulfilled = self.customers_demands[action] if self.capacity >= self.customers_demands[action] else self.customers_demands[action] - self.capacity
+                if sum(self.customers_demands) == 0:
+                    self.terminal = 1
+
+            else:
+                self.action = agents.transition(self.state, feasible_action_indexes)
+                distance = self.euclidean_distance(self.current_location, self.customers_coordinates[self.action])
+
+                demand_fulfilled = self.customers_demands[self.action] if self.capacity >= self.customers_demands[self.action] else self.customers_demands[self.action] - self.capacity
 
                 for vec in mdcvrp.vehicles:
-                    vec.customers_demands[action] -= demand_fulfilled
+                    vec.customers_demands[self.action] -= demand_fulfilled
 
                 yield env.timeout(distance)
 
-                self.current_location = self.customers_coordinates[action]
+                self.current_location = self.customers_coordinates[self.action]
                 self.total_distance += distance
                 self.depot_distance = self.euclidean_distance(self.current_location, self.depot_location)
                 self.total_delivered_load += demand_fulfilled
@@ -134,7 +139,7 @@ class Vehicle:
 
                 self.update_distances()
                 for vec in mdcvrp.vehicles:
-                    vec.state[action + self.num_customers] -= demand_fulfilled
+                    vec.state[self.action + self.num_customers] -= demand_fulfilled
                 self.state[self.num_customers * 2] = self.capacity - demand_fulfilled
                 self.state[self.num_customers * 2 + 1] = self.euclidean_distance(self.current_location, self.depot_location)
                 self.state[self.num_customers * 2 + 2] += demand_fulfilled
@@ -142,16 +147,8 @@ class Vehicle:
 
                 self.reward = -distance
 
-            if sum(self.customers_demands) == 0:
-                distance = self.euclidean_distance(self.current_location, self.depot_location)
-                yield env.timeout(distance)
+            self.solution.append(self.action)
+            self.transition = [self.previous_state, self.action, self.reward, self.state, self.terminal]
+            agents.memory.store(*self.transition)
 
-                self.total_distance += distance
-                self.depot_distance = 0
-                self.state[self.num_customers * 2 + 1] = 0
-                self.state[self.num_customers * 2 + 3] += distance
-                self.terminal = 1
-                self.reward = -distance
-
-        print(self.total_distance)
-        print(self.vehicle_id)
+            agents.optimize_model()
