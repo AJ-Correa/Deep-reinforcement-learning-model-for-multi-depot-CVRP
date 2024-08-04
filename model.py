@@ -91,7 +91,7 @@ class Agents:
         self.epsilon_threshold = s.EPSILON_END + (s.EPSILON_START - s.EPSILON_END) * math.exp(
             -1. * self.epoch_id / s.EPSILON_DECAY)
 
-        q_values = self.policy_net(torch.tensor(np.array(state).astype(np.float32))).to(s.DEVICE)
+        q_values = self.policy_net(torch.tensor(np.array(state).astype(np.float32)).to(s.DEVICE))
 
         if sample < self.epsilon_threshold:
             op_id = random.choice(feasible_actions_indexes)

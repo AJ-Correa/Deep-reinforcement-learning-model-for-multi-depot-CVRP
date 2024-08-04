@@ -9,11 +9,14 @@ from instance_gen import gen_uniform_instance, read_cvrp_benchmark_instance
 class Solution:
     def __init__(self):
         self.results_pool = []
+        self.map_pool = []
 
     def add_pool(self, agents):
         total_distance = 0
+        self.map_pool.append([])
         for agent in agents:
             total_distance += agent.total_distance
+            self.map_pool[-1].append(agent.solution)
 
         self.results_pool.append(total_distance)
 
@@ -71,7 +74,7 @@ class Vehicle:
         self.terminal = 0
 
         self.transition = list()
-        self.solution = []
+        self.solution = [self.num_customers]
 
         self.process = env.process(self.run(env, mdcvrp, agents))
 

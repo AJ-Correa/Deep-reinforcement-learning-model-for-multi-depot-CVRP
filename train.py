@@ -1,9 +1,12 @@
 import environment
 import model
 import rainbow_model
+import time
 import settings as s
 
 def learn():
+    st = time.time()
+
     world = environment.MDCVRP("train")
 
     if s.USE_RAINBOW == 0:
@@ -25,6 +28,8 @@ def learn():
             fraction = min(epoch / s.NUM_EPOCHS, 1.0)
             agents.beta = agents.beta + fraction * (1.0 - agents.beta)
 
-    return world.solution.results_pool, agents.loss_log
+    et = time.time()
 
-learn()
+    print("Total computational time: ", et - st, " seconds")
+
+    return world.solution.results_pool, world.solution.map_pool, agents.loss_log, world
